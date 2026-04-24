@@ -109,20 +109,20 @@ class DiffusionPredictor:
     def sample_trajectories(self, cond: torch.Tensor, num_traj: int = 64) -> torch.Tensor:
         """Generate multiple trajectories for a given macro condition."""
         self.model.eval()
-        batch_size = 1  # single condition, multiple trajectories
         cond = cond.view(1, -1).expand(num_traj, -1).to(self.device)
         x = torch.randn(num_traj, self.data_dim, device=self.device)
-        for step in reversed(range(self.num_steps)):
-            t = torch.full((num_traj,), step, device=self.device).float() / self.num_steps
-            alpha = self.alpha[step]
-            alpha_bar = self.alpha_bar[step]
-            beta = self.beta[step]
-            eps_pred = self.model(x, t, cond)
-            if step > 0:
-                z = torch.randn_like(x)
-            else:
-                z = torch.zeros_like(x)
-            x = (x - beta / torch.sqrt(1 - alpha_bar) * eps_pred) / torch.sqrt(alpha)
-            if step > 0:
-                x += torch.sqrt(beta) * z
-        return x
+        with torch.no_grad():
+            for step in reversed(range(self.num_steps)):
+                t = torch.full((num_traj,), step, device=self.device).float() / self.num_steps
+                alpha = self.alpha[step]
+                alpha_bar = self.alpha_bar[step]
+                beta = self.beta[step]
+                eps_pred = self.model(x, t, cond)
+                if step > 0:
+                    z = torch.randn_like(x)
+                else:
+                    z = torch.zeros_like(x)
+                x = (x - beta / torch.sqrt(1 - alpha_bar) * eps_pred) / torch.sqrt(alpha)
+                if step > 0:
+                    x += torch.sqrt(beta) * z
+        return x.detach()
