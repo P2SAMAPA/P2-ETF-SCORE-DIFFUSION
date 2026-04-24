@@ -40,6 +40,10 @@ def load_latest_results():
         return None
 
 def return_badge(val):
+    try:
+        val = float(val)
+    except (TypeError, ValueError):
+        return '<span style="color:#999;">N/A</span>'
     if val >= 0:
         return f'<span class="metric-positive">+{val*100:.2f}%</span>'
     return f'<span class="metric-negative">{val*100:.2f}%</span>'
@@ -80,14 +84,16 @@ for tab, key in zip(tabs, universe_keys):
         if top:
             pick = top[0]
             ticker = pick['ticker']
-            ret = pick['expected_return']
+            ret = pick.get('expected_return')
             std = pick.get('trajectory_std', 0.0)
+            if ret is None:
+                ret = 0.0
             st.markdown(f"""
             <div class="hero-card">
                 <div style="font-size: 1.2rem; opacity: 0.8;">🌊 TOP PICK (Diffusion‑Averaged Return)</div>
                 <div class="hero-ticker">{ticker}</div>
                 <div>Expected Return: {return_badge(ret)}</div>
-                <div style="margin-top: 0.5rem;">Trajectory Std: {std*100:.2f}%</div>
+                <div style="margin-top: 0.5rem;">Trajectory Std: {return_badge(std)}</div>
             </div>
             """, unsafe_allow_html=True)
 
@@ -96,7 +102,7 @@ for tab, key in zip(tabs, universe_keys):
             for p in top:
                 rows.append({
                     "Ticker": p['ticker'],
-                    "Expected Return": f"{p['expected_return']*100:.2f}%",
+                    "Expected Return": f"{p.get('expected_return', 0.0)*100:.2f}%",
                     "Trajectory Std": f"{p.get('trajectory_std', 0.0)*100:.2f}%"
                 })
             df = pd.DataFrame(rows)
@@ -107,7 +113,7 @@ for tab, key in zip(tabs, universe_keys):
             for t, d in universe_data.items():
                 all_rows.append({
                     "Ticker": t,
-                    "Expected Return": f"{d['expected_return']*100:.2f}%",
+                    "Expected Return": f"{d.get('expected_return', 0.0)*100:.2f}%",
                     "Trajectory Std": f"{d.get('trajectory_std', 0.0)*100:.2f}%"
                 })
             df_all = pd.DataFrame(all_rows).sort_values("Expected Return", ascending=False)
