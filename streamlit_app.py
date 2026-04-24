@@ -48,6 +48,13 @@ def return_badge(val):
         return f'<span class="metric-positive">+{val*100:.2f}%</span>'
     return f'<span class="metric-negative">{val*100:.2f}%</span>'
 
+def safe_pct(val):
+    """Format a float as percentage string, or N/A if missing."""
+    try:
+        return f"{float(val)*100:.2f}%"
+    except (TypeError, ValueError):
+        return "N/A"
+
 # --- Sidebar ---
 st.sidebar.markdown("## ⚙️ Configuration")
 calendar = USMarketCalendar()
@@ -83,7 +90,7 @@ for tab, key in zip(tabs, universe_keys):
         universe_data = universes.get(key, {})
         if top:
             pick = top[0]
-            ticker = pick['ticker']
+            ticker = pick.get('ticker', 'N/A')
             ret = pick.get('expected_return')
             std = pick.get('trajectory_std', 0.0)
             if ret is None:
@@ -101,9 +108,9 @@ for tab, key in zip(tabs, universe_keys):
             rows = []
             for p in top:
                 rows.append({
-                    "Ticker": p['ticker'],
-                    "Expected Return": f"{p.get('expected_return', 0.0)*100:.2f}%",
-                    "Trajectory Std": f"{p.get('trajectory_std', 0.0)*100:.2f}%"
+                    "Ticker": p.get('ticker', 'N/A'),
+                    "Expected Return": safe_pct(p.get('expected_return')),
+                    "Trajectory Std": safe_pct(p.get('trajectory_std'))
                 })
             df = pd.DataFrame(rows)
             st.dataframe(df, use_container_width=True, hide_index=True)
@@ -113,8 +120,8 @@ for tab, key in zip(tabs, universe_keys):
             for t, d in universe_data.items():
                 all_rows.append({
                     "Ticker": t,
-                    "Expected Return": f"{d.get('expected_return', 0.0)*100:.2f}%",
-                    "Trajectory Std": f"{d.get('trajectory_std', 0.0)*100:.2f}%"
+                    "Expected Return": safe_pct(d.get('expected_return')),
+                    "Trajectory Std": safe_pct(d.get('trajectory_std'))
                 })
             df_all = pd.DataFrame(all_rows).sort_values("Expected Return", ascending=False)
             st.dataframe(df_all, use_container_width=True, hide_index=True)
