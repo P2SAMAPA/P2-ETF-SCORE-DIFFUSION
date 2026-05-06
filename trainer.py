@@ -132,13 +132,17 @@ def run_score_diffusion():
         # FIX Bug 3: iterate over etf_names (actual data columns), not config tickers
         universe_results = {}
         for i, ticker in enumerate(etf_names):
+            mean_ret_ann = float(traj_orig[:, i].mean() * 252)
+            traj_std_ann = float(traj_orig[:, i].std()  * np.sqrt(252))
             universe_results[ticker] = {
-                "ticker":          ticker,
-                "composite_score": float(scores[i]),
-                "mean_return_ann": float(traj_orig[:, i].mean() * 252),
-                "upside_prob":     float((traj_orig[:, i] > 0).mean()),
-                "trajectory_std":  float(traj_orig[:, i].std() * np.sqrt(252)),
-                "momentum_ann":    float(recent_ret_ann[i]),
+                "ticker":           ticker,
+                "composite_score":  float(scores[i]),
+                # expected_return kept as alias — dashboard reads this key
+                "expected_return":  mean_ret_ann,
+                "mean_return_ann":  mean_ret_ann,
+                "upside_prob":      float((traj_orig[:, i] > 0).mean()),
+                "trajectory_std":   traj_std_ann,
+                "momentum_ann":     float(recent_ret_ann[i]),
             }
 
         all_results[universe_name] = universe_results
