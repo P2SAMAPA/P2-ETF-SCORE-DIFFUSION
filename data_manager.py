@@ -1,63 +1,93 @@
 """
-Data loading and preprocessing for Score Diffusion engine.
+Fetch and prepare data from Hugging Face dataset.
 """
-
 import pandas as pd
 import numpy as np
 from huggingface_hub import hf_hub_download
-from sklearn.preprocessing import StandardScaler
 import config
 
+
 def load_master_data() -> pd.DataFrame:
-    print(f"Downloading {config.HF_DATA_FILE} from {config.HF_DATA_REPO}...")
+    print(f"Downloading {config.HF_INPUT_FILE} from {config.HF_INPUT_DATASET}...")
     file_path = hf_hub_download(
-        repo_id=config.HF_DATA_REPO,
-        filename=config.HF_DATA_FILE,
+        repo_id=config.HF_INPUT_DATASET,
+        filename=config.HF_INPUT_FILE,
         repo_type="dataset",
         token=config.HF_TOKEN,
-        cache_dir="./hf_cache"
     )
     df = pd.read_parquet(file_path)
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df.reset_index().rename(columns={'index': 'Date'})
-    df['Date'] = pd.to_datetime(df['Date'])
     return df
 
-def prepare_returns_matrix(df_wide: pd.DataFrame, tickers: list) -> pd.DataFrame:
-    """Prepare wide-format log returns."""
-    available_tickers = [t for t in tickers if t in df_wide.columns]
-    df_long = pd.melt(
-        df_wide, id_vars=['Date'], value_vars=available_tickers,
-        var_name='ticker', value_name='price'
-    )
-    df_long = df_long.sort_values(['ticker', 'Date'])
-    df_long['log_return'] = df_long.groupby('ticker')['price'].transform(
-        lambda x: np.log(x / x.shift(1))
-    )
-    df_long = df_long.dropna(subset=['log_return'])
-    return df_long.pivot(index='Date', columns='ticker', values='log_return')[available_tickers].dropna()
 
-def prepare_macro_features(df_wide: pd.DataFrame) -> pd.DataFrame:
-    """Extract macro columns and forward-fill."""
-    macro_cols = [c for c in config.MACRO_COLS if c in df_wide.columns]
-    macro_df = df_wide[['Date'] + macro_cols].copy()
-    macro_df = macro_df.set_index('Date').ffill().dropna()
-    return macro_df
+def prepare_data(df: pd.DataFrame) -> pd.DataFrame:
+    print("DataFrame columns:", df.columns.tolist())
+    print("DataFrame index dtype:", df.index.dtype)
 
-def build_training_data(returns: pd.DataFrame, macro: pd.DataFrame) -> tuple:
-    """
-    Returns:
-        X_ret: (n_samples, n_assets) – log returns at each date
-        X_cond: (n_samples, cond_dim) – macro features at each date
-        scaler_ret: StandardScaler fitted on returns
-        scaler_cond: StandardScaler fitted on macro
-    """
-    common_idx = returns.index.intersection(macro.index)
-    returns = returns.loc[common_idx]
-    macro = macro.loc[common_idx]
+    if pd.api.types.is_datetime64_any_dtype(df.index):
+        df = df.sort_index()
+        return compute_returns(df)
 
-    scaler_ret = StandardScaler()
-    scaler_cond = StandardScaler()
-    X_ret = scaler_ret.fit_transform(returns.values)
-    X_cond = scaler_cond.fit_transform(macro.values)
-    return X_ret, X_cond, scaler_ret, scaler_cond, returns.columns.tolist()
+    if pd.api.types.is_numeric_dtype(df.index):
+        sample_val = df.index[0] if len(df) > 0 else 0
+        if sample_val > 1e12:
+            unit = "ns"
+        elif sample_val > 1e10:
+            unit = "ms"
+        elif sample_val > 1e9:
+            unit = "s"
+        else:
+            unit = None
+        if unit is not None:
+            df.index = pd.to_datetime(df.index, unit=unit)
+            df = df.sort_index()
+            return compute_returns(df)
+
+    possible_time_cols = ["__index_level_0__", "date", "Date", "timestamp", "time", "index"]
+    time_col = next((c for c in possible_time_cols if c in df.columns), None)
+
+    if time_col is not None:
+        if pd.api.types.is_numeric_dtype(df[time_col]):
+            sample_val = df[time_col].iloc[0]
+            unit = "ns" if sample_val > 1e12 else "ms" if sample_val > 1e10 else "s" if sample_val > 1e9 else None
+            df["date"] = pd.to_datetime(df[time_col], unit=unit) if unit else pd.to_datetime(df[time_col])
+        else:
+            df["date"] = pd.to_datetime(df[time_col])
+        df = df.set_index("date")
+        if time_col != "date":
+            df = df.drop(columns=[time_col])
+        df = df.sort_index()
+        return compute_returns(df)
+
+    for col in df.columns:
+        try:
+            converted = pd.to_datetime(df[col])
+            if converted.notna().all():
+                df["date"] = converted
+                df = df.set_index("date").drop(columns=[col]).sort_index()
+                return compute_returns(df)
+        except Exception:
+            continue
+
+    raise KeyError("Unable to locate date information.")
+
+
+def compute_returns(df: pd.DataFrame) -> pd.DataFrame:
+    """Compute log returns for all price columns."""
+    price_cols = [col for col in df.columns if col not in config.MACRO_COLS]
+    for col in price_cols:
+        df[f"{col}_ret"] = np.log(df[col] / df[col].shift(1))
+    return df
+
+
+def get_universe_returns(df: pd.DataFrame, universe: str) -> pd.DataFrame:
+    if universe == "fi":
+        tickers = config.FI_COMMODITY_TICKERS
+    elif universe == "equity":
+        tickers = config.EQUITY_TICKERS
+    elif universe == "combined":
+        tickers = config.COMBINED_TICKERS
+    else:
+        raise ValueError("universe must be 'fi', 'equity', or 'combined'")
+
+    ret_cols = [f"{t}_ret" for t in tickers if f"{t}_ret" in df.columns]
+    return df[ret_cols].dropna()
