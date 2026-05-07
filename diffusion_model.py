@@ -239,11 +239,18 @@ class DiffusionPredictor:
                 beta_t      = self.beta[step]
 
                 eps_pred = self.model(x, t, cond)
+                # Clamp predicted noise to ±3 to prevent exploding denoising steps.
+                # An undertrained score network can output large epsilon values that
+                # compound across 100 reverse steps → trajectories with magnitude >>1
+                # in scaled space → thousands-of-percent returns after inverse_transform.
+                eps_pred = torch.clamp(eps_pred, -3.0, 3.0)
 
                 # Correct DDPM posterior mean (Ho et al. eq. 11)
                 x = (1.0 / torch.sqrt(alpha_t)) * (
                     x - (beta_t / torch.sqrt(1.0 - alpha_bar_t)) * eps_pred
                 )
+                # Clamp x at each step to keep trajectories in a sane range
+                x = torch.clamp(x, -5.0, 5.0)
                 if step > 0:
                     x = x + torch.sqrt(beta_t) * torch.randn_like(x)
 
