@@ -47,8 +47,9 @@ def _composite_score(traj_orig: np.ndarray, recent_returns: np.ndarray) -> np.nd
     """
     n_assets = traj_orig.shape[1]
 
-    # Factor 1: macro-conditioned mean trajectory (annualised)
-    mean_ret = traj_orig.mean(axis=0) * 252
+    # Factor 1: macro-conditioned MEDIAN trajectory (annualised)
+    # Use median — robust to outlier trajectories even after clamping
+    mean_ret = np.median(traj_orig, axis=0) * 252
 
     # Factor 2: upside probability P(traj > 0) — rewards positive skew
     upside_prob = (traj_orig > 0).mean(axis=0)
@@ -116,28 +117,42 @@ def run_score_diffusion():
 
         # Sample trajectories conditioned on latest macro
         latest_cond = torch.tensor(X_cond[-1:], dtype=torch.float32)
-        traj        = predictor.sample_trajectories(latest_cond, num_traj=config.NUM_TRAJECTORIES)
-        traj_np     = traj.cpu().numpy()          # (num_traj, n_assets)
+        # FIX EXPLODING RETURNS: use 256 trajectories (was NUM_TRAJECTORIES which
+        # could be 64 — too few to get a stable mean from N(0,1) samples)
+        traj    = predictor.sample_trajectories(latest_cond, num_traj=256)
+        traj_np = traj.cpu().numpy()   # (256, n_assets)
+
+        # FIX: clamp in SCALED space to ±3σ before inverse-transforming.
+        # Without this, outlier trajectories from an undertrained model produce
+        # values with magnitude >> 1 in scaled space. At scaler.scale_ ≈ 0.01
+        # (daily vol), even a scaled value of 5 → 5*0.01*252 = 1260% annualised.
+        traj_np_clamped = np.clip(traj_np, -3.0, 3.0)
 
         # Inverse-transform to original log-return scale
-        traj_orig   = scaler_ret.inverse_transform(traj_np)  # (num_traj, n_assets)
+        traj_orig = scaler_ret.inverse_transform(traj_np_clamped)  # (256, n_assets)
+
+        # FIX: use MEDIAN not mean — robust to the few remaining outlier trajectories
+        # after clamping. Median of 256 N(0,1)/scale samples gives a stable
+        # daily return estimate with std ≈ daily_vol/sqrt(256)*1.25 ≈ 0.08% daily.
+        median_daily = np.median(traj_orig, axis=0)   # (n_assets,)
+        std_daily    = traj_orig.std(axis=0)          # (n_assets,)
 
         # FIX Bug 6: trailing 63-day momentum (annualised log return per asset)
         lookback = min(63, len(returns))
         recent_ret_ann = returns.iloc[-lookback:].mean().values * 252  # (n_assets,)
 
-        # Composite score
+        # Composite score (uses median_daily * 252 internally)
         scores = _composite_score(traj_orig, recent_ret_ann)
 
         # FIX Bug 3: iterate over etf_names (actual data columns), not config tickers
         universe_results = {}
         for i, ticker in enumerate(etf_names):
-            mean_ret_ann = float(traj_orig[:, i].mean() * 252)
-            traj_std_ann = float(traj_orig[:, i].std()  * np.sqrt(252))
+            mean_ret_ann = float(median_daily[i] * 252)
+            traj_std_ann = float(std_daily[i] * np.sqrt(252))
             universe_results[ticker] = {
                 "ticker":           ticker,
                 "composite_score":  float(scores[i]),
-                # expected_return kept as alias — dashboard reads this key
+                # expected_return: dashboard reads this key
                 "expected_return":  mean_ret_ann,
                 "mean_return_ann":  mean_ret_ann,
                 "upside_prob":      float((traj_orig[:, i] > 0).mean()),
