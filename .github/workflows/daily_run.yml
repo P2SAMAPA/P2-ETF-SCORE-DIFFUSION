@@ -2,7 +2,7 @@ name: Daily Score Diffusion Run
 
 on:
   schedule:
-    - cron: '0 00 * * 1-6'
+    - cron: '30 01 * * 1-6'
   workflow_dispatch:
 
 jobs:
